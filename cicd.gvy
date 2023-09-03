@@ -1,82 +1,72 @@
 pipeline {
     agent any
-    tools {
-        jdk 'java1.8'
-    }
     stages {
-        stage('compile') {
-	         steps {
-                // step1 
-                echo 'compiling..'
-		            git url: 'https://github.com/kmrsanthoshkumar/PetClinic'
+      stage('compile') {
+	        steps {
+		            git url: 'https://github.com/kmrsanthoshkumar/samplejavaapp'
 		            sh script: '/opt/maven/bin/mvn compile'
-           }
+          }
+      }
+      stage('codereview-pmd') {
+	      steps {
+		        sh script: '/opt/maven/bin/mvn -P metrics pmd:pmd'
         }
-        stage('codereview-pmd') {
-	         steps {
-                // step2
-                echo 'codereview..'
-		            sh script: '/opt/maven/bin/mvn -P metrics pmd:pmd'
-           }
-	         post {
-               success {
-		             recordIssues enabledForFailure: true, tool: pmdParser(pattern: '**/target/pmd.xml')
-               }
-           }		
+	      post {
+          success {
+		          recordIssues enabledForFailure: true, tool: pmdParser(pattern: '**/target/pmd.xml')
+          }
+        }		
+      }
+      stage('unit-test') {
+	      steps {
+	        sh script: '/opt/maven/bin/mvn test'
         }
-        stage('unit-test') {
-	          steps {
-                // step3
-                echo 'unittest..'
-	               sh script: '/opt/maven/bin/mvn test'
-            }
-	          post {
-               success {
-                   junit 'target/surefire-reports/*.xml'
-               }
-            }			
-        }
-        stage('codecoverage') {
+	      post {
+          success {
+              junit 'target/surefire-reports/*.xml'
+          }
+        }			
+      }
+       stage('codecoverage') {
 
            tools {
               jdk 'java1.8'
            }
-	        stage('codecoverage') {
-	   steps {
-                echo 'unittest..'
-	        sh script: '/opt/maven/bin/mvn verify'
-                 }
-	   post {
+	         steps {
+                // step4
+                echo 'codecoverage..'
+		            sh script: '/opt/maven/bin/mvn cobertura:cobertura -Dcobertura.report.format=xml'
+           }
+	         post {
                success {
-                   jacoco buildOverBuild: true, deltaBranchCoverage: '20', deltaClassCoverage: '20', deltaComplexityCoverage: '20', deltaInstructionCoverage: '20', deltaLineCoverage: '20', deltaMethodCoverage: '20'
+	               cobertura autoUpdateHealth: false, autoUpdateStability: false, coberturaReportFile: 'target/site/cobertura/coverage.xml', conditionalCoverageTargets: '70, 0, 0', failUnhealthy: false, failUnstable: false, lineCoverageTargets: '80, 0, 0', maxNumberOfBuilds: 0, methodCoverageTargets: '80, 0, 0', onlyStable: false, sourceEncoding: 'ASCII', zoomCoverageChart: false                  
                }
-           }			
-        }
-        stage('package/build-war') {
-	         steps {
-                // step5
-                echo 'package......'
-		            sh script: '/opt/maven/bin/mvn package'	
            }		
         }
-        stage('build & push docker image') {
-	         steps {
-              withDockerRegistry(credentialsId: 'DOCKER_HUB_LOGIN', url: 'https://index.docker.io/v1/') {
-                    sh script: 'cd  $WORKSPACE'
-                    sh script: 'docker build --file Dockerfile --tag docker.io/santhosh1997/petclinic:$BUILD_NUMBER .'
-                    sh script: 'docker push docker.io/lerndevops/petclinic:$BUILD_NUMBER'
-              }	
-           }		
-        }
-    stage('Deploy-App-QA') {
-  	   steps {
-              sh 'ansible-playbook --inventory /tmp/inv $WORKSPACE/deploy/deploy-kube.yml --extra-vars "env=qa build=$BUILD_NUMBER"'
-	   }
-	   //post { 
-           //   always { 
-           //     cleanWs() 
-	   //   }
-	   //}
-	}
+      stage('package') {
+	      steps {
+		      sh script: '/opt/maven/bin/mvn package'	
+        }		
+      }
+      stage('build docker image') {
+	      steps {
+	        sh 'cd $WORKSPACE'
+		      sh 'docker build --file Dockerfile --tag santhosh1997/samplejavaapp:$BUILD_NUMBER .'
+        }	
+      }
+      stage('push docker image') {
+	      steps {
+		      withCredentials([string(credentialsId: 'DOCKER_HUB_PWD', variable: 'DOCKER_HUB_PWD')]) {
+              sh "docker login -u sathosh1997 -p ${DOCKER_HUB_PWD}"
+			    }
+		      sh 'docker push santhosh1997/samplejavaapp:$BUILD_NUMBER'
+		    }
+      }
+      stage('Deploy to K8s') {
+  	    steps {
+    		    sh 'sed -i "s/bno/"$BUILD_NUMBER"/g" deploy/sampleapp-deploy-k8s.yml'
+    		    sh 'kubectl apply -f deploy/sampleapp-deploy-k8s.yml'
+	      }
+	    }   
     }
 }
